@@ -1,0 +1,58 @@
+# ===================
+# OS-generated files
+# ===================
+.DS_Store
+Thumbs.db
+
+# ===================
+# Visual Studio Code
+# ===================
+.vscode/
+*.code-workspace
+
+# ===================
+# Visual Studio
+# ===================
+*.VC.db
+*.VC.opendb
+*.sln
+*.vcxproj
+*.vcxproj.user
+*.suo
+*.user
+*.filters
+ipch/
+*.pdb
+*.idb
+*.log
+*.sdf
+
+# ===================
+# Build artifacts
+# ===================
+*.o
+*.obj
+*.out
+*.exe
+*.dll
+*.lib
+*.pdb
+*.tmp
+*.elf
+*.map
+*.so
+*.a
+*.pch
+*.manifest
+
+# ===================
+# Coverage
+# ===================
+*.gcda
+*.gcno
+*.gcov
+
+# ===================
+# FFTW or other local libs
+# ===================
+lib/
