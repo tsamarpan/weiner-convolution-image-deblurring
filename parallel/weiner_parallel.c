@@ -570,20 +570,30 @@ int main(int argc, char **argv)
     /* Scatter the input image. 
        3 * w * h floats total => we chop into 'size' vertical slices.
        Each slice is patch_size_3ch floats. 
-    */
+    */ 
     MPI_Scatter(
-        /* sendbuf   = full_img [on rank 0], recvbuf = slice_in [on others] */
         full_img, patch_size_3ch, MPI_FLOAT,
         slice_in, patch_size_3ch, MPI_FLOAT,
         0, MPI_COMM_WORLD
     );
 
-    /* Scatter the PSF image (single-channel). */
-    MPI_Scatter(
-        psf_img, patch_size_1ch, MPI_FLOAT,
-        psf_slice, patch_size_1ch, MPI_FLOAT,
-        0, MPI_COMM_WORLD
-    );
+    // Broadcast full PSF to all ranks
+    float *psf_full = (float *)malloc(sizeof(float) * img_w * img_h);
+    if (rank == 0) {
+        memcpy(psf_full, psf_img, sizeof(float) * img_w * img_h);
+    }
+    MPI_Bcast(psf_full, img_w * img_h, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    // Extract this rank’s PSF slice (rows y_start to y_end)
+    int y_start = rank * patch_h;
+    for (int y = 0; y < patch_h; y++) {
+        memcpy(
+            psf_slice + y * patch_w,
+            psf_full + (y + y_start) * patch_w,
+            sizeof(float) * patch_w
+        );
+    }
+    free(psf_full);
 
     /* Now we have an RGB slice in slice_in (size = patch_size_3ch).
        We'll treat each channel separately for Wiener deconvolution. 

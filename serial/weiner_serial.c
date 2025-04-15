@@ -328,76 +328,54 @@ static void wiener_deconv_1ch(
     int h,
     double K
 ) {
-    int N = w * h;
-    int i;
-    
-    /* Create temporary copy of PSF for centering and normalization */
-    float *psf_copy = (float *)malloc(sizeof(float) * N);
-    if (!psf_copy) {
-        fprintf(stderr, "Error: Out of memory for PSF processing\n");
-        return;
+    int pad_w = 2 * w;
+    int pad_h = 2 * h;
+    int padded_size = pad_w * pad_h;
+
+    // Allocate padded buffers
+    double *padded_in = (double *)fftw_malloc(sizeof(double) * padded_size);
+    double *padded_psf = (double *)fftw_malloc(sizeof(double) * padded_size);
+    memset(padded_in, 0, sizeof(double) * padded_size);
+    memset(padded_psf, 0, sizeof(double) * padded_size);
+
+    // Copy image and PSF to top-left corner
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            padded_in[y * pad_w + x] = img_in[y * w + x];
+            padded_psf[y * pad_w + x] = img_psf[y * w + x];
+        }
     }
-    
-    for (i = 0; i < N; i++) {
-        psf_copy[i] = img_psf[i];
-    }
-    
-    /* Center and normalize the PSF */
-    center_psf(psf_copy, w, h);
-    normalize_psf(psf_copy, w, h);
 
-    /* Allocate double arrays for FFTW. We must convert float->double. */
-    double *in_spatial  = (double *)fftw_malloc(sizeof(double) * N);
-    double *psf_spatial = (double *)fftw_malloc(sizeof(double) * N);
-    
-    /* Copy data to double arrays */
-    for (i = 0; i < N; i++) {
-        in_spatial[i]  = (double)img_in[i];
-        psf_spatial[i] = (double)psf_copy[i];
-    }
-    
-    /* For 2D real-to-complex transforms, we need different dimensions */
-    int n_complex_out = h * (w/2 + 1); /* FFTW r2c format */
+    // Center and normalize PSF
+    center_psf((float *)padded_psf, pad_w, pad_h);
+    normalize_psf((float *)padded_psf, pad_w, pad_h);
 
-    /* Frequency-domain (complex) buffers with correct size for r2c transform */
-    fftw_complex *freq_in  = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex_out);
-    fftw_complex *freq_psf = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex_out);
-    fftw_complex *freq_out = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex_out);
+    // Allocate frequency domain buffers
+    int n_complex = pad_h * (pad_w/2 + 1);
+    fftw_complex *freq_in  = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex);
+    fftw_complex *freq_psf = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex);
+    fftw_complex *freq_out = (fftw_complex *)fftw_malloc(sizeof(fftw_complex) * n_complex);
 
-    /* Plans */
-    fftw_plan p_fwd_in = fftw_plan_dft_r2c_2d(h, w,
-                                             in_spatial, freq_in,
-                                             FFTW_ESTIMATE);
-    fftw_plan p_fwd_psf = fftw_plan_dft_r2c_2d(h, w,
-                                              psf_spatial, freq_psf,
-                                              FFTW_ESTIMATE);
+    // Plans
+    fftw_plan p_in  = fftw_plan_dft_r2c_2d(pad_h, pad_w, padded_in, freq_in, FFTW_ESTIMATE);
+    fftw_plan p_psf = fftw_plan_dft_r2c_2d(pad_h, pad_w, padded_psf, freq_psf, FFTW_ESTIMATE);
+    fftw_plan p_out = fftw_plan_dft_c2r_2d(pad_h, pad_w, freq_out, padded_in, FFTW_ESTIMATE);
 
-    fftw_plan p_inv_out = fftw_plan_dft_c2r_2d(h, w,
-                                              freq_out, in_spatial,
-                                              FFTW_ESTIMATE);
+    // Execute forward FFTs
+    fftw_execute(p_in);
+    fftw_execute(p_psf);
 
-    /* Forward FFT */
-    fftw_execute(p_fwd_in);
-    fftw_execute(p_fwd_psf);
-
-    /* Apply Wiener filter:
-       D(k) = B(k)*conjugate(H(k)) / (|H(k)|^2 + K)
-       We store result in freq_out.
-    */
-    for (i = 0; i < n_complex_out; i++) {
-        double B_r = freq_in[i][0];
-        double B_i = freq_in[i][1];
-        double H_r = freq_psf[i][0];
-        double H_i = freq_psf[i][1];
-
-        double mag2 = H_r*H_r + H_i*H_i;  /* |H|^2 */
+    // Wiener filter
+    for (int i = 0; i < n_complex; i++) {
+        double B_r = freq_in[i][0], B_i = freq_in[i][1];
+        double H_r = freq_psf[i][0], H_i = freq_psf[i][1];
+        double mag2 = H_r * H_r + H_i * H_i;
         double denom = mag2 + K;
 
-        /* B * conj(H) = (B_r*H_r + B_i*H_i) + j(B_i*H_r - B_r*H_i) */
-        double num_r = B_r*H_r + B_i*H_i;
-        double num_i = B_i*H_r - B_r*H_i;
+        double num_r = B_r * H_r + B_i * H_i;
+        double num_i = B_i * H_r - B_r * H_i;
 
-        if (denom < 1e-15) {
+        if (denom < 1e-12) {
             freq_out[i][0] = 0.0;
             freq_out[i][1] = 0.0;
         } else {
@@ -406,28 +384,30 @@ static void wiener_deconv_1ch(
         }
     }
 
-    /* Inverse FFT => in_spatial. Then convert back to float. */
-    fftw_execute(p_inv_out);
+    // Inverse FFT
+    fftw_execute(p_out);
 
-    /* Normalize since FFTW doesn't do it automatically. */
-    for (i = 0; i < N; i++) {
-        double val = in_spatial[i] / (double)N;  /* scale by 1/N */
-        img_out[i] = (float)val;
+    // Normalize IFFT result and crop back to original size
+    int offset_y = (pad_h - h) / 2;
+    int offset_x = (pad_w - w) / 2;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int i_pad = (y + offset_y) * pad_w + (x + offset_x);
+            img_out[y * w + x] = (float)(padded_in[i_pad] / padded_size);
+        }
     }
 
-    /* Cleanup */
-    fftw_destroy_plan(p_fwd_in);
-    fftw_destroy_plan(p_fwd_psf);
-    fftw_destroy_plan(p_inv_out);
+    fftw_destroy_plan(p_in);
+    fftw_destroy_plan(p_psf);
+    fftw_destroy_plan(p_out);
 
     fftw_free(freq_in);
     fftw_free(freq_psf);
     fftw_free(freq_out);
-    fftw_free(in_spatial);
-    fftw_free(psf_spatial);
-    free(psf_copy);
+    fftw_free(padded_in);
+    fftw_free(padded_psf);
 }
-
 /*
  * main:
  *   Entry point for the serial Wiener deconvolution program.
