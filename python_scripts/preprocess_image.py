@@ -23,8 +23,9 @@ def preprocess_image(input_filename, target_size=(512, 512), sigma=10.0):
     name, _ = os.path.splitext(input_filename)
     blurred_filename = f"{name}_blurred_sigma{sigma}.png"
     blurred_path = os.path.join(processed_dir, blurred_filename)
-    psf_path = os.path.join(processed_dir, "psf.png")
-    
+    psf_png_path = os.path.join(processed_dir, "psf_visual.png")   # for visualization
+    psf_npy_path = os.path.join(processed_dir, "psf.npy")          # for computation
+
     # Load and resize image
     img = cv2.imread(input_path)
     if img is None:
@@ -38,11 +39,19 @@ def preprocess_image(input_filename, target_size=(512, 512), sigma=10.0):
     cv2.imwrite(blurred_path, blurred_img)
     print(f"Blurred image saved as: {blurred_path}")
 
-    # Generate and save PSF as grayscale image
-    psf = create_psf((target_size[1], target_size[0]), sigma)  # shape = (height, width)
-    psf_img = (psf * 255).astype(np.uint8)
-    cv2.imwrite(psf_path, psf_img)
-    print(f"PSF saved as: {psf_path}")
+    # Generate PSF
+    psf = create_psf((target_size[1], target_size[0]), sigma)
+
+    # Save PSF as raw array (high precision)
+    np.save(psf_npy_path, psf.astype(np.float32))
+    print(f"PSF raw data saved as: {psf_npy_path}")
+    psf = np.load("images/processed/psf.npy")
+    print(psf.shape, psf.dtype)
+
+    # Save PSF as PNG (just for visualization)
+    psf_img = cv2.normalize(psf, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    cv2.imwrite(psf_png_path, psf_img)
+    print(f"PSF image saved as: {psf_png_path}")
 
 def main():
     parser = argparse.ArgumentParser(

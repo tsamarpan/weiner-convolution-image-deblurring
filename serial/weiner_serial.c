@@ -38,7 +38,78 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
+#include <stdint.h>
 
+// Reads little-endian uint16 from buffer
+static uint16_t read_le_uint16(const unsigned char *buf) {
+    return (uint16_t)(buf[0]) | ((uint16_t)(buf[1]) << 8);
+}
+
+static float *load_psf_npy(const char *filename, int expected_w, int expected_h)
+{
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: could not open .npy file %s\n", filename);
+        return NULL;
+    }
+
+    unsigned char magic[6];
+    if (fread(magic, 1, 6, f) != 6 || memcmp(magic, "\x93NUMPY", 6) != 0) {
+        fprintf(stderr, "Error: not a valid .npy file.\n");
+        fclose(f);
+        return NULL;
+    }
+
+    unsigned char version[2];
+    fread(version, 1, 2, f);
+    int major = version[0], minor = version[1];
+
+    int header_len = 0;
+    if (major == 1) {
+        unsigned char hl[2];
+        fread(hl, 1, 2, f);
+        header_len = hl[0] + (hl[1] << 8);
+    } else if (major == 2) {
+        unsigned char hl[4];
+        fread(hl, 1, 4, f);
+        header_len = hl[0] + (hl[1] << 8) + (hl[2] << 16) + (hl[3] << 24);
+    } else {
+        fprintf(stderr, "Unsupported .npy version: %d.%d\n", major, minor);
+        fclose(f);
+        return NULL;
+    }
+
+    char *header = (char *)malloc(header_len + 1);
+    fread(header, 1, header_len, f);
+    header[header_len] = '\0';
+
+    if (!strstr(header, "'descr': '<f4'") || !strstr(header, "'fortran_order': False")) {
+        fprintf(stderr, "Unsupported format: must be float32, little-endian, C-order.\nHeader: %s\n", header);
+        free(header);
+        fclose(f);
+        return NULL;
+    }
+
+    int total = expected_w * expected_h;
+    float *data = (float *)malloc(sizeof(float) * total);
+    if (!data) {
+        fprintf(stderr, "Out of memory\n");
+        free(header);
+        fclose(f);
+        return NULL;
+    }
+
+    size_t read_count = fread(data, sizeof(float), total, f);
+    if (read_count != total) {
+        fprintf(stderr, "Read error: expected %d floats but got %zu\n", total, read_count);
+        free(data);
+        data = NULL;
+    }
+
+    free(header);
+    fclose(f);
+    return data;
+}
 /* 
  * read_image_rgb:
  *   Reads a 3-channel RGB image from file and returns float data in range [0,1].
@@ -400,7 +471,14 @@ int main(int argc, char **argv)
 
     /* Load single-channel PSF */
     int psf_w = 0, psf_h = 0;
-    float *psf = read_image_gray(psf_path, &psf_w, &psf_h);
+    float *psf = NULL;
+    if (strstr(psf_path, ".npy") != NULL) {
+        psf_w = img_w;
+        psf_h = img_h;
+        psf = load_psf_npy(psf_path, psf_w, psf_h);
+    } else {
+        psf = read_image_gray(psf_path, &psf_w, &psf_h);
+    }
     if (!psf) {
         fprintf(stderr, "Could not load PSF image.\n");
         free(img_rgb);
