@@ -1,6 +1,16 @@
 import cv2
 import os
 import argparse
+import numpy as np
+
+def create_psf(shape, sigma):
+    """Generate a centered 2D Gaussian PSF."""
+    h, w = shape
+    y, x = np.indices((h, w))
+    center_x, center_y = w // 2, h // 2
+    psf = np.exp(-((x - center_x)**2 + (y - center_y)**2) / (2 * sigma**2))
+    psf /= psf.sum()
+    return psf
 
 def preprocess_image(input_filename, target_size=(512, 512), sigma=10.0):
     # Define input and output directories
@@ -8,28 +18,31 @@ def preprocess_image(input_filename, target_size=(512, 512), sigma=10.0):
     processed_dir = os.path.join("images", "processed")
     os.makedirs(processed_dir, exist_ok=True)
     
-    # Build input and output file paths
+    # Build file paths
     input_path = os.path.join(raw_dir, input_filename)
     name, _ = os.path.splitext(input_filename)
-    # The output filename includes the sigma value for clarity
-    output_filename = f"{name}_blurred_sigma{sigma}.png"
-    output_path = os.path.join(processed_dir, output_filename)
+    blurred_filename = f"{name}_blurred_sigma{sigma}.png"
+    blurred_path = os.path.join(processed_dir, blurred_filename)
+    psf_path = os.path.join(processed_dir, "psf.png")
     
-    # Load the image
+    # Load and resize image
     img = cv2.imread(input_path)
     if img is None:
         raise FileNotFoundError(f"Could not open image: {input_path}")
-    
-    # Resize the image to the target dimensions
     resized_img = cv2.resize(img, target_size, interpolation=cv2.INTER_AREA)
-    
-    # Apply synthetic Gaussian blur.
-    # Using a kernel size of (0, 0) lets OpenCV compute it from sigma.
+
+    # Apply Gaussian blur
     blurred_img = cv2.GaussianBlur(resized_img, (0, 0), sigmaX=sigma)
-    
-    # Save the blurred image as a PNG file
-    cv2.imwrite(output_path, blurred_img)
-    print(f"Blurred image saved as: {output_path}")
+
+    # Save blurred image
+    cv2.imwrite(blurred_path, blurred_img)
+    print(f"Blurred image saved as: {blurred_path}")
+
+    # Generate and save PSF as grayscale image
+    psf = create_psf((target_size[1], target_size[0]), sigma)  # shape = (height, width)
+    psf_img = (psf * 255).astype(np.uint8)
+    cv2.imwrite(psf_path, psf_img)
+    print(f"PSF saved as: {psf_path}")
 
 def main():
     parser = argparse.ArgumentParser(
